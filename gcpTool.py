@@ -26,6 +26,7 @@ class GCPTool:
             command = "gcloud compute ssh --project %s --zone %s "\
                   "--internal-ip %s" % (
                       self.project, self.zone, self.server_name)
+        print("logging in...")
         os.system(command)
 
     def start(self):
@@ -47,12 +48,16 @@ class GCPTool:
             command = "gcloud compute instances attach-disk --project %s "\
                       "--zone %s %s --disk=%s" % (
                           self.project, self.zone, self.server_name, disk)
+
+        print('attaching %s to %s...' % (disk, self.server_name))
         os.system(command)
 
     def detach_disk(self, disk):
         command = "gcloud compute instances detach-disk --project %s "\
                   "--zone %s %s --disk=%s" % (
                       self.project, self.zone, self.server_name, disk)
+
+        print('detaching %s from %s...' % (disk, self.server_name))
         os.system(command)
 
     def add_network_tag(self, tags):
@@ -85,8 +90,8 @@ class CommandLineTool:
             'ssh': self.ssh,
             'start': self.start,
             'stop': self.stop,
-            'attach-disk': self.attach_disk,
-            'detach-disk': self.detach_disk, 
+            'attach': self.attach_disk,
+            'detach': self.detach_disk, 
             'add-tag': 'add_tag',
             'remove-tag': 'remove_tag',
         }
@@ -95,81 +100,115 @@ class CommandLineTool:
         print("Come again!")
 
     def ssh(self):
+        # initialization
         args = self.get_args()
-        server = self.check_required_parameter('--server', args)
-        user_id = args['--userid'] if '--userid' in args.keys() else None
-        project, zone, server = self.get_server_details(args)
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+        user_id = args['--user'] if '--user' in args.keys() else None
+
+        # get server details
+        project, zone, server = self.get_server_details(server, project)
         
-        question = "Are you sure you want to ssh on below server?(y/n)\
-                    \r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n" % (
+        # validation
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to ssh on the above server?(y/n)" % (
                         server, project, zone
                     )
         val = input(question)
         self.yes_no_validation(val)
-        print('logging in...')
+
+        # ssh
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.ssh(user_id)
 
     def start(self):
+        # initialization
         args = self.get_args()
-        server = self.check_required_parameter('--server', args)
-        project, zone, server = self.get_server_details(args)
-        
-        question = "Are you sure you want to start below server?(y/n)\
-                    \r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n" % (
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+
+        # get server details
+        project, zone, server = self.get_server_details(server, project)
+
+        # validation
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to start above server?(y/n)" % (
                         server, project, zone
                     )
         val = input(question)
         self.yes_no_validation(val)
-        print('starting server...')
+
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.start()
 
     def stop(self):
+        # initialization
         args = self.get_args()
-        server = self.check_required_parameter('--server', args)
-        project, zone, server = self.get_server_details(args)
-        
-        question = "Are you sure you want to stop below server?(y/n)\
-                    \r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n" % (
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+
+        # get server details
+        project, zone, server = self.get_server_details(server, project)
+
+        # validation
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to stop above server?(y/n)" % (
                         server, project, zone
                     )
         val = input(question)
         self.yes_no_validation(val)
-        print('stopping server...')
+
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.stop()
         
     def attach_disk(self):
+        # filter
+        required = [
+            ['--disk', '-d']
+        ]
         args = self.get_args()
-        server = self.check_required_parameter('--server', args)
-        disk = self.check_required_parameter('--disk', args)
+        self.check_required_parameter(required, args)
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+        disk = args['--disk'] if '--disk' in args.keys() else args['-d']
         is_boot = True if '--boot' in args.keys() else False
-        project, zone, server = self.get_server_details(args)
+
+        project, zone, server = self.get_server_details(server, project)
         
-        question = "Are you sure you want to attach %s disk on below server?(y/n)\
-                    \r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n" % (
-                        disk, server, project, zone
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to attach %s disk on above server?(y/n)" % (
+                        server, project, zone, disk
                     )
         val = input(question)
         self.yes_no_validation(val)
-        print('attaching %s to %s...' % (disk, server))
+
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.attach_disk(disk,is_boot)
 
     def detach_disk(self):
+        # filter
+        required = [
+            ['--disk', '-d']
+        ]
         args = self.get_args()
-        server = self.check_required_parameter('--server', args)
-        disk = self.check_required_parameter('--disk', args)
-        project, zone, server = self.get_server_details(args)
+        self.check_required_parameter(required, args)
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+        disk = args['--disk'] if '--disk' in args.keys() else args['-d']
+
+        project, zone, server = self.get_server_details(server, project)
         
-        question = "Are you sure you want to detach %s disk on below server?(y/n)\
-                    \r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n" % (
-                        disk, server, project, zone
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to detach %s disk on above server?(y/n)" % (
+                        server, project, zone, disk
                     )
         val = input(question)
         self.yes_no_validation(val)
-        print('detaching %s from %s...' % (disk, server))
+
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.detach_disk(disk)
 
@@ -179,6 +218,14 @@ class CommandLineTool:
     def remove_tag(self):
         pass
 
+    def get_server(self):
+        args_length = len(self.args)
+        if args_length <= 2:
+            print("Please provide server name.")
+            sys.exit()
+
+        return self.args[2]
+
     def yes_no_validation(self, val):
         if val != 'y' and val != 'n':
             print("Wrong input")
@@ -187,13 +234,13 @@ class CommandLineTool:
             print("exiting...")
             sys.exit(1)
 
-    def get_server_details(self, args):
-        if '--project' in args.keys():
+    def get_server_details(self, server, project):
+        if project:
             return self.get_server_detail_via_gcloud(
-                args['--server'], args['--project']
+                server, project
                 )
         else:
-            return self.get_server_detail_from_list(args['--server'])
+            return self.get_server_detail_from_list(server)
 
     def get_server_detail_from_list(self, server):
         data = []
@@ -277,8 +324,8 @@ class CommandLineTool:
 
     def get_args(self):
         args = {}
-        args_length = len(self.args[2:]) + 2
-        for i in range(2, args_length):
+        args_length = len(self.args)        
+        for i in range(3, args_length):
             try:
                 if self.args[i] == '--boot':
                     key = self.args[i]
@@ -295,12 +342,13 @@ class CommandLineTool:
 
         return args
 
-    def check_required_parameter(self, param, args):
-        if param not in args.keys():
-            print('Missing "%s" parameter' % param)
-            sys.exit(1)
-
-        return args[param]
+    def check_required_parameter(self, required, args):
+        for option in required:
+            if option[0] not in args.keys() and option[1] not in args.keys():
+                print("Missing parameter: %s or %s" % (option[0], option[1]))
+                sys.exit()
+        
+        return True
 
     def execute(self):
         if len(self.args) == 1:
