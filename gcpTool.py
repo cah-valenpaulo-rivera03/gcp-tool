@@ -1,9 +1,16 @@
 #!/usr/bin/env python
 
+import json
 import os
 import re
+import subprocess
 import sys
 import time
+
+import random, string
+
+from datetime import datetime
+from datetime import timedelta
 
 
 class GCPTool:
@@ -52,7 +59,81 @@ class GCPTool:
         print('attaching %s to %s...' % (disk, self.server_name))
         os.system(command)
 
+    def restore_disk(self, date, time=None):
+        print('getting list of disks...')
+        get_disk_cmd = 'gcloud compute disks list --filter="users:%s" '\
+            '--format=json --project %s' % (self.server_name, self.project)
+        disks = subprocess.getoutput(get_disk_cmd) 
+        disks = json.loads(disks)
+
+        print('Choose disk to restore:') 
+        for i, disk in enumerate(disks):
+            print('%s - %s' % (i+1, disk['name']))
+
+        val = input('Pick a number: ')
+        try:
+            val = int(val) - 1
+        except ValueError:
+            print("You pick a wrong number")
+            sys.exit()
+
+        if val < 0:
+            print("You pick a wrong number")
+            sys.exit()
+
+        try:
+            disk = disks[val]
+        except IndexError:
+            print("You pick a wrong number")
+            sys.exit(1)
+
+        disk_name = disk["name"]
+        disk_size = disk["sizeGb"]
+        disk_type = disk["type"]
+
+        if time:
+            snapshot_name = "hourly-%s" % disk_name
+            date_time_str = "%sT%s" % (date, time)
+            date_time_filter = datetime.strptime(date_time_str, "%Y-%m-%dT%H")
+            date_time_filter = date_time_filter - timedelta(hours=3)
+            date_time_filter = date_time_filter.strftime("%Y-%m-%dT%H")
+            filter = "name:" + snapshot_name + "* AND creationTimestamp.date('%Y-%m-%dT%H')='" + date_time_filter + "'"
+        else:
+            snapshot_name = "daily-%s" % disk_name
+            filter = "name:" + snapshot_name + "* AND creationTimestamp.date('%Y-%m-%d')='" + date + "'"
+
+        print('getting disk snapshot...')
+        get_snapshot_cmd = 'gcloud compute snapshots list --project=%s '\
+            '--filter="%s" --format="json"' % (self.project, filter)
+        snapshot = subprocess.getoutput(get_snapshot_cmd)
+        try:
+            snapshot = json.loads(snapshot)
+        except json.decoder.JSONDecodeError:
+            print("No snapshot found!")
+            sys.exit()
+
+        snapshot_name = snapshot[0]["name"]
+        snapshot_epoc_time = snapshot_name.split("-")[-1]
+
+        print('creating disk via "%s" snapshot...' % snapshot_name)
+        
+        ran = ''.join(random.choices(string.ascii_lowercase + string.digits, k = 6))
+        new_disk_name = "%s-%s-%s" % (disk_name, snapshot_epoc_time, ran)
+        create_disk_cmd = "gcloud compute disks create %s " \
+            "--project %s --zone %s " \
+            "--size=%s " \
+            "--source-snapshot=%s " \
+            "--type=%s " % (new_disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type)
+        os.system(create_disk_cmd)
+        print("disk %s has been created." % new_disk_name)
+
+        self.detach_disk(disk_name)
+
+        self.attach_disk(new_disk_name, is_boot=True)
+
+        
     def detach_disk(self, disk):
+        # get server disk details
         command = "gcloud compute instances detach-disk --project %s "\
                   "--zone %s %s --disk=%s" % (
                       self.project, self.zone, self.server_name, disk)
@@ -92,6 +173,7 @@ class CommandLineTool:
             'stop': self.stop,
             'attach': self.attach_disk,
             'detach': self.detach_disk, 
+            'restore': self.restore_disk, 
             'add-tag': 'add_tag',
             'remove-tag': 'remove_tag',
         }
@@ -186,6 +268,33 @@ class CommandLineTool:
 
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.attach_disk(disk,is_boot)
+
+    def restore_disk(self):
+        # filter
+        required = [
+            ['--date', '-D'],
+            ['--time', '-T']
+        ]
+        args = self.get_args()
+        self.check_required_parameter(required, args)
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+        date = args['--date'] if '--date' in args.keys() else args['-D']
+        time = args['--time'] if '--time' in args.keys() else args['-T']
+
+        project, zone, server = self.get_server_details(server, project)
+        
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to restore disk on above server?(y/n)" % (
+                        server, project, zone
+                    )
+        val = input(question)
+        self.yes_no_validation(val)
+
+        gcp_tool = GCPTool(server, project, zone)
+        gcp_tool.restore_disk(date, time)
 
     def detach_disk(self):
         # filter
