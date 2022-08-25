@@ -151,10 +151,23 @@ class GCPTool:
         command = "gcloud compute instances remove-tags --project %s "\
                   "--zone %s %s --tags=%s" % (
                       self.project, self.zone, self.server_name, tags)
-        os.system(command)        
+        os.system(command)  
+
+    def get_status(self):
+        print("Checking instance status...")
+
+        get_status = 'gcloud compute instances describe %s '\
+            '--project %s --zone %s --flatten=status ' % (self.server_name, self.project, self.zone)
+        instance_status = subprocess.getoutput(get_status)
+        instance_status = instance_status.split('---\n')[1].split()[0]
+
+        return instance_status 
 
     def add_label(self, labels=[]):
-        pass
+        command = "gcloud compute instances add-labels --project %s "\
+                  "--zone %s %s --labels=%s" % (
+                      self.project, self.zone, self.server_name, labels)
+        os.system(command)
 
     def remove_label(self, labels=[]):
         pass
@@ -174,6 +187,7 @@ class CommandLineTool:
             'attach': self.attach_disk,
             'detach': self.detach_disk, 
             'restore': self.restore_disk, 
+            'decommission': self.decommission, 
             'add-tag': 'add_tag',
             'remove-tag': 'remove_tag',
         }
@@ -242,6 +256,51 @@ class CommandLineTool:
 
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.stop()
+
+    def decommission(self):
+        # initialization
+        args = self.get_args()
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+
+        # get server details
+        project, zone, server = self.get_server_details(server, project)
+
+        # validation
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to decommission above server?(y/n)" % (
+                        server, project, zone
+                    )
+        val = input(question)
+        self.yes_no_validation(val)
+
+        gcp_tool = GCPTool(server, project, zone)
+        # check instance status
+        instance_status = gcp_tool.get_status()
+        print("%s: %s" % (server, instance_status))
+
+        if instance_status == "RUNNING":
+            # power off server
+            # gcp_tool.stop()
+            print("powering off the server...")
+        else:    
+            print("Server is already powered off.")
+
+        
+        # check server environment (nonprod/prod)
+        question = "\n(1) Non-prod\n(2) Prod\nChoose Server Environment (1|2): "
+        val = input(question)
+        if val == "1":
+            server_retention = 7
+        elif val == "2":
+            server_retention = 14
+        else:
+            print("Wrong input.")
+
+        termination_date = datetime.now() + timedelta(days=server_retention)
+        termination_date_f = termination_date.strftime("%Y%m%d")
+
+        print("%s_termination_%s" % (server, termination_date_f))
         
     def attach_disk(self):
         # filter
