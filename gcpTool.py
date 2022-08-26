@@ -173,7 +173,8 @@ class CommandLineTool:
             'stop': self.stop,
             'attach': self.attach_disk,
             'detach': self.detach_disk, 
-            'restore': self.restore_disk, 
+            'restore': self.restore_disk,
+            'get-status': self.get_server_status, 
             'add-tag': 'add_tag',
             'remove-tag': 'remove_tag',
         }
@@ -326,6 +327,25 @@ class CommandLineTool:
 
     def remove_tag(self):
         pass
+
+    def get_server_status(self):
+        args_length = len(self.args)
+        if args_length <= 2:
+            print("Please provide server list.")
+            sys.exit()
+
+        server_list = self.args[2]
+
+        with open(server_list,"r") as file:
+            for instance_ids in file:
+                instance_id = instance_ids.split()[0]
+
+                with open("instancesList.txt","r") as file:
+                    for line in file:
+                        if re.search(instance_id, line):
+                            server = line.split()[0].split('/')[5]
+                            status = line.split()[2]
+                            print("%s - %s" % (server, status))
 
     def get_server(self):
         args_length = len(self.args)
