@@ -151,29 +151,32 @@ class GCPTool:
         command = "gcloud compute instances remove-tags --project %s "\
                   "--zone %s %s --tags=%s" % (
                       self.project, self.zone, self.server_name, tags)
-        os.system(command)  
-
-    def get_status(self):
-        print("Checking instance status...")
-
-        get_status = 'gcloud compute instances describe %s '\
-            '--project %s --zone %s --flatten=status ' % (self.server_name, self.project, self.zone)
-        instance_status = subprocess.getoutput(get_status)
-        instance_status = instance_status.split('---\n')[1].split()[0]
-
-        return instance_status 
+        os.system(command)        
 
     def add_label(self, labels=[]):
-        command = "gcloud compute instances add-labels --project %s "\
-                  "--zone %s %s --labels=%s" % (
-                      self.project, self.zone, self.server_name, labels)
-        os.system(command)
+        pass
 
     def remove_label(self, labels=[]):
         pass
 
-    def modify_label(self, label={}):
-        pass
+    def modify_label(self, label):
+        command = "gcloud compute instances update --project %s "\
+                  "--zone %s %s --update-labels %s" % (
+                      self.project, self.zone, self.server_name, label)
+        os.system(command)
+
+    def set_disk_auto_delete(self):
+        get_disk_cmd = 'gcloud compute disks list --filter="users:%s" '\
+            '--format=json --project %s' % (self.server_name, self.project)
+        disks = subprocess.getoutput(get_disk_cmd) 
+        disks = json.loads(disks)
+
+        for disk in disks:
+            print("Setting auto-delete on '%s' disk..." % disk['name'])
+            command = "gcloud beta compute instances set-disk-auto-delete --project %s "\
+                    "--zone %s %s --auto-delete --disk=%s" % (
+                        self.project, self.zone, self.server_name, disk['name'])
+            os.system(command)
 
 
 class CommandLineTool:
@@ -186,10 +189,13 @@ class CommandLineTool:
             'stop': self.stop,
             'attach': self.attach_disk,
             'detach': self.detach_disk, 
-            'restore': self.restore_disk, 
-            'decommission': self.decommission, 
+            'restore': self.restore_disk,
+            'get-status': self.get_server_status, 
             'add-tag': 'add_tag',
             'remove-tag': 'remove_tag',
+            'update-label': self.update_label,
+            'set-disk-auto-delete': self.set_disk_auto_delete,
+            'decommission': self.decommission
         }
     
     def help(self):
@@ -256,51 +262,6 @@ class CommandLineTool:
 
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.stop()
-
-    def decommission(self):
-        # initialization
-        args = self.get_args()
-        server = self.get_server()
-        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
-
-        # get server details
-        project, zone, server = self.get_server_details(server, project)
-
-        # validation
-        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
-                    \r\nAre you sure you want to decommission above server?(y/n)" % (
-                        server, project, zone
-                    )
-        val = input(question)
-        self.yes_no_validation(val)
-
-        gcp_tool = GCPTool(server, project, zone)
-        # check instance status
-        instance_status = gcp_tool.get_status()
-        print("%s: %s" % (server, instance_status))
-
-        if instance_status == "RUNNING":
-            # power off server
-            # gcp_tool.stop()
-            print("powering off the server...")
-        else:    
-            print("Server is already powered off.")
-
-        
-        # check server environment (nonprod/prod)
-        question = "\n(1) Non-prod\n(2) Prod\nChoose Server Environment (1|2): "
-        val = input(question)
-        if val == "1":
-            server_retention = 7
-        elif val == "2":
-            server_retention = 14
-        else:
-            print("Wrong input.")
-
-        termination_date = datetime.now() + timedelta(days=server_retention)
-        termination_date_f = termination_date.strftime("%Y%m%d")
-
-        print("%s_termination_%s" % (server, termination_date_f))
         
     def attach_disk(self):
         # filter
@@ -385,6 +346,105 @@ class CommandLineTool:
 
     def remove_tag(self):
         pass
+
+    def update_label(self):
+        # filter
+        required = [
+            ['--label', '-l']
+        ]
+        args = self.get_args()
+        self.check_required_parameter(required, args)
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+        label = args['--label'] if '--label' in args.keys() else args['-l']
+        label_key, label_value = label.split("=")
+
+        project, zone, server = self.get_server_details(server, project)
+        
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to update '%s' label on above server?(y/n)" % (
+                        server, project, zone, label_key
+                    )
+        val = input(question)
+        self.yes_no_validation(val)
+
+        gcp_tool = GCPTool(server, project, zone)
+        gcp_tool.modify_label(label)
+
+    def set_disk_auto_delete(self):
+        args = self.get_args()
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+
+        project, zone, server = self.get_server_details(server, project)
+        
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to auto delete disks on above server?(y/n)" % (
+                        server, project, zone
+                    )
+        val = input(question)
+        self.yes_no_validation(val)
+
+        gcp_tool = GCPTool(server, project, zone)
+        gcp_tool.set_disk_auto_delete()
+
+    def decommission(self):
+        args = self.get_args()
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+
+        project, zone, server = self.get_server_details(server, project)
+        
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to decommission above server?(y/n)" % (
+                        server, project, zone
+                    )
+        val = input(question)
+        self.yes_no_validation(val)
+
+        gcp_tool = GCPTool(server, project, zone)
+
+        print("Starting Decommission steps...")
+
+        if "pr-cah" in project:
+            days_before_termination = 14
+
+        else:
+            days_before_termination = 7
+        
+        today = datetime.now()
+        days_before_termination_timedelta = timedelta(days=days_before_termination)
+        decommission_date_datetime = today + days_before_termination_timedelta
+        decommission_date = decommission_date_datetime.strftime("%Y%m%d")
+        decommission_label = "resourcename=%s_termination_%s" % (server, decommission_date)
+        
+        gcp_tool.modify_label(decommission_label)
+        gcp_tool.set_disk_auto_delete()
+
+    def get_server_status(self):
+        args_length = len(self.args)
+        if args_length <= 2:
+            print("Please provide server list.")
+            sys.exit()
+
+        server_list = self.args[2]
+
+        with open(server_list,"r") as file:
+            for instance_ids in file:
+                instance_id = instance_ids.split()[0]
+
+                with open("instancesList.txt","r") as file:
+                    for line in file:
+                        if re.search(instance_id, line):
+                            server = line.split()[0].split('/')[5]
+                            status = line.split()[2]
+                            print("%s - %s" % (server, status))
 
     def get_server(self):
         args_length = len(self.args)
@@ -500,7 +560,21 @@ class CommandLineTool:
                     value = True
                     args.update({key: value})
                     continue
-                
+
+                elif self.args[i] == '--label':
+                    key = self.args[i]
+                    i += 1;
+                    value = self.args[i]
+                    args.update({key: value})
+                    break
+
+                elif self.args[i] == '-l':
+                    key = self.args[i]
+                    i += 1;
+                    value = self.args[i]
+                    args.update({key: value})
+                    break
+
                 key, value = self.args[i].split('=')
             except ValueError:
                 print("Wrong command format")
