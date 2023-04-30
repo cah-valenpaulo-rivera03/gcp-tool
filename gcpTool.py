@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 
+import csv
+
 import random, string
 
 from datetime import datetime
@@ -394,23 +396,49 @@ class CommandLineTool:
 
     def decommission(self):
         args = self.get_args()
+        args_length = len(self.args)
+        if args_length <= 2:
+            print("Please provide servername/serverlist.")
+            sys.exit()
 
-        # initialization
-        server = self.get_server()
-        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+        if ".csv" in self.args[2]:
+            with open(self.args[2]) as csv_file:
+                csv_reader = csv.reader(csv_file)
 
-        project, zone, server = self.get_server_details(server, project)
-        
-        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
-                    \r\nAre you sure you want to decommission above server?(y/n)" % (
-                        server, project, zone
+                print("Server List:")
+                for row in csv_reader:
+                    print(row[0])
+
+                val = input("Are you sure to decommission above servers?(y/n)")
+                self.yes_no_validation(val) 
+
+            with open(self.args[2]) as csv_file:
+                csv_reader = csv.reader(csv_file)
+
+                for row in csv_reader:
+                    project, zone, server = self.get_server_details(row[0], None)
+                    print(
+                        "\r\nServer: %s\r\nProject: %s\r\nZone:%s" % (
+                            server, project, zone
+                        )
                     )
-        val = input(question)
-        self.yes_no_validation(val)
 
-        gcp_tool = GCPTool(server, project, zone)
+                    self.decommission_steps(server, project, zone)
+        else:
+            server = self.args[2]
+            project, zone, server = self.get_server_details(server, None)
+        
+            question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                        \r\nAre you sure you want to decommission above server?(y/n)" % (
+                            server, project, zone
+                        )
+            val = input(question)
+            self.yes_no_validation(val)
 
-        print("Starting Decommission steps...")
+            self.decommission_steps(server, project, zone)
+
+    def decommission_steps(self, server, project, zone):
+        print("\r\n(%s) Starting Decommission steps..." % server)
 
         if "pr-cah" in project:
             days_before_termination = 14
@@ -424,6 +452,7 @@ class CommandLineTool:
         decommission_date = decommission_date_datetime.strftime("%Y%m%d")
         decommission_label = "resourcename=%s_termination_%s" % (server, decommission_date)
         
+        gcp_tool = GCPTool(server, project, zone)
         gcp_tool.modify_label(decommission_label)
         gcp_tool.set_disk_auto_delete()
 
