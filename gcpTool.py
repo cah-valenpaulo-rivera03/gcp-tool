@@ -61,7 +61,7 @@ class GCPTool:
         print('attaching %s to %s...' % (disk, self.server_name))
         os.system(command)
 
-    def restore_disk(self, date, time=None):
+    def restore_disk(self, date, time):
         print('getting list of disks...')
         get_disk_cmd = 'gcloud compute disks list --filter="users:%s" '\
             '--format=json --project %s' % (self.server_name, self.project)
@@ -92,17 +92,13 @@ class GCPTool:
         disk_name = disk["name"]
         disk_size = disk["sizeGb"]
         disk_type = disk["type"]
+        disk_labels = disk["labels"] if "labels" in disk else None
+        disk_policies = disk["resourcePolicies"]
 
-        if time:
-            snapshot_name = "hourly-%s" % disk_name
-            date_time_str = "%sT%s" % (date, time)
-            date_time_filter = datetime.strptime(date_time_str, "%Y-%m-%dT%H")
-            date_time_filter = date_time_filter - timedelta(hours=3)
-            date_time_filter = date_time_filter.strftime("%Y-%m-%dT%H")
-            filter = "name:" + snapshot_name + "* AND creationTimestamp.date('%Y-%m-%dT%H')='" + date_time_filter + "'"
-        else:
-            snapshot_name = "daily-%s" % disk_name
-            filter = "name:" + snapshot_name + "* AND creationTimestamp.date('%Y-%m-%d')='" + date + "'"
+        # snapshot filter
+        time_utc = int(time) + 4
+        datetime = date + str(time_utc)
+        filter = "sourceDisk:" + disk_name + " AND name ~ " + datetime
 
         print('getting disk snapshot...')
         get_snapshot_cmd = 'gcloud compute snapshots list --project=%s '\
@@ -114,24 +110,47 @@ class GCPTool:
             print("No snapshot found!")
             sys.exit()
 
-        snapshot_name = snapshot[0]["name"]
-        snapshot_epoc_time = snapshot_name.split("-")[-1]
+        if len(snapshot) == 0:
+            print("No snapshot found")
+            sys.exit()
 
+        print(snapshot)
+        data = snapshot[0]
+        snapshot_name = data["name"]
+        snapshot_random_key = data["name"].split("-")[-1]
+        
         print('creating disk via "%s" snapshot...' % snapshot_name)
         
-        ran = ''.join(random.choices(string.ascii_lowercase + string.digits, k = 6))
-        new_disk_name = "%s-%s-%s" % (disk_name, snapshot_epoc_time, ran)
-        create_disk_cmd = "gcloud compute disks create %s " \
-            "--project %s --zone %s " \
-            "--size=%s " \
-            "--source-snapshot=%s " \
-            "--type=%s " % (new_disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type)
+        new_disk_name = "%s-%s" % (disk_name, snapshot_random_key)
+
+        if disk_labels:
+            create_disk_cmd = "gcloud compute disks create %s " \
+                "--project %s --zone %s " \
+                "--size=%s " \
+                "--source-snapshot=%s " \
+                "--type=%s " \
+                "--labels=%s" % (new_disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type, disk_labels)
+        else:
+            create_disk_cmd = "gcloud compute disks create %s " \
+                "--project %s --zone %s " \
+                "--size=%s " \
+                "--source-snapshot=%s " \
+                "--type=%s " % (new_disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type)
+
         os.system(create_disk_cmd)
+
+        for policy_link in disk_policies:
+            policy = policy_link.split('/')[-1]
+            add_policy_cmd = "gcloud compute disks add-resource-policies %s " \
+                "--project %s --zone %s " \
+                "--resource-policies=%s " % (new_disk_name, self.project, self.zone, policy)
+            os.system(add_policy_cmd)
+            
         print("disk %s has been created." % new_disk_name)
 
-        self.detach_disk(disk_name)
+        # self.detach_disk(disk_name)
 
-        self.attach_disk(new_disk_name, is_boot=True)
+        # self.attach_disk(new_disk_name, is_boot=True)
 
         
     def detach_disk(self, disk):
