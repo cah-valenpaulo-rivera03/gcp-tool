@@ -440,7 +440,7 @@ class CommandLineTool:
     def decommission_steps(self, server, project, zone):
         print("\r\n(%s) Starting Decommission steps..." % server)
 
-        if "pr-cah" in project:
+        if "pr-cah" in project and ("lpec" in server or "lpil" in server or "lpoh" in server):
             days_before_termination = 14
 
         else:
@@ -454,6 +454,7 @@ class CommandLineTool:
         
         gcp_tool = GCPTool(server, project, zone)
         gcp_tool.modify_label(decommission_label)
+        gcp_tool.modify_label("autostart=none")
         gcp_tool.set_disk_auto_delete()
 
     def get_server_status(self):
