@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 
+import csv
+
 import random, string
 
 from datetime import datetime
@@ -159,8 +161,24 @@ class GCPTool:
     def remove_label(self, labels=[]):
         pass
 
-    def modify_label(self, label={}):
-        pass
+    def modify_label(self, label):
+        command = "gcloud compute instances update --project %s "\
+                  "--zone %s %s --update-labels %s" % (
+                      self.project, self.zone, self.server_name, label)
+        os.system(command)
+
+    def set_disk_auto_delete(self):
+        get_disk_cmd = 'gcloud compute disks list --filter="users:%s" '\
+            '--format=json --project %s' % (self.server_name, self.project)
+        disks = subprocess.getoutput(get_disk_cmd) 
+        disks = json.loads(disks)
+
+        for disk in disks:
+            print("Setting auto-delete on '%s' disk..." % disk['name'])
+            command = "gcloud beta compute instances set-disk-auto-delete --project %s "\
+                    "--zone %s %s --auto-delete --disk=%s" % (
+                        self.project, self.zone, self.server_name, disk['name'])
+            os.system(command)
 
 
 class CommandLineTool:
@@ -177,6 +195,9 @@ class CommandLineTool:
             'get-status': self.get_server_status, 
             'add-tag': 'add_tag',
             'remove-tag': 'remove_tag',
+            'update-label': self.update_label,
+            'set-disk-auto-delete': self.set_disk_auto_delete,
+            'decommission': self.decommission
         }
     
     def help(self):
@@ -328,6 +349,114 @@ class CommandLineTool:
     def remove_tag(self):
         pass
 
+    def update_label(self):
+        # filter
+        required = [
+            ['--label', '-l']
+        ]
+        args = self.get_args()
+        self.check_required_parameter(required, args)
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+        label = args['--label'] if '--label' in args.keys() else args['-l']
+        label_key, label_value = label.split("=")
+
+        project, zone, server = self.get_server_details(server, project)
+        
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to update '%s' label on above server?(y/n)" % (
+                        server, project, zone, label_key
+                    )
+        val = input(question)
+        self.yes_no_validation(val)
+
+        gcp_tool = GCPTool(server, project, zone)
+        gcp_tool.modify_label(label)
+
+    def set_disk_auto_delete(self):
+        args = self.get_args()
+
+        # initialization
+        server = self.get_server()
+        project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
+
+        project, zone, server = self.get_server_details(server, project)
+        
+        question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                    \r\nAre you sure you want to auto delete disks on above server?(y/n)" % (
+                        server, project, zone
+                    )
+        val = input(question)
+        self.yes_no_validation(val)
+
+        gcp_tool = GCPTool(server, project, zone)
+        gcp_tool.set_disk_auto_delete()
+
+    def decommission(self):
+        args = self.get_args()
+        args_length = len(self.args)
+        if args_length <= 2:
+            print("Please provide servername/serverlist.")
+            sys.exit()
+
+        if ".csv" in self.args[2]:
+            with open(self.args[2]) as csv_file:
+                csv_reader = csv.reader(csv_file)
+
+                print("Server List:")
+                for row in csv_reader:
+                    print(row[0])
+
+                val = input("Are you sure to decommission above servers?(y/n)")
+                self.yes_no_validation(val) 
+
+            with open(self.args[2]) as csv_file:
+                csv_reader = csv.reader(csv_file)
+
+                for row in csv_reader:
+                    project, zone, server = self.get_server_details(row[0], None)
+                    print(
+                        "\r\nServer: %s\r\nProject: %s\r\nZone:%s" % (
+                            server, project, zone
+                        )
+                    )
+
+                    self.decommission_steps(server, project, zone)
+        else:
+            server = self.args[2]
+            project, zone, server = self.get_server_details(server, None)
+        
+            question = "\r\nServer: %s\r\nProject: %s\r\nZone:%s\r\n\
+                        \r\nAre you sure you want to decommission above server?(y/n)" % (
+                            server, project, zone
+                        )
+            val = input(question)
+            self.yes_no_validation(val)
+
+            self.decommission_steps(server, project, zone)
+
+    def decommission_steps(self, server, project, zone):
+        print("\r\n(%s) Starting Decommission steps..." % server)
+
+        if "pr-cah" in project and ("lpec" in server or "lpil" in server or "lpoh" in server):
+            days_before_termination = 14
+
+        else:
+            days_before_termination = 7
+        
+        today = datetime.now()
+        days_before_termination_timedelta = timedelta(days=days_before_termination)
+        decommission_date_datetime = today + days_before_termination_timedelta
+        decommission_date = decommission_date_datetime.strftime("%Y%m%d")
+        decommission_label = "resourcename=%s_termination_%s" % (server, decommission_date)
+        
+        gcp_tool = GCPTool(server, project, zone)
+        gcp_tool.modify_label(decommission_label)
+        gcp_tool.modify_label("autostart=none")
+        gcp_tool.set_disk_auto_delete()
+
     def get_server_status(self):
         args_length = len(self.args)
         if args_length <= 2:
@@ -461,7 +590,21 @@ class CommandLineTool:
                     value = True
                     args.update({key: value})
                     continue
-                
+
+                elif self.args[i] == '--label':
+                    key = self.args[i]
+                    i += 1;
+                    value = self.args[i]
+                    args.update({key: value})
+                    break
+
+                elif self.args[i] == '-l':
+                    key = self.args[i]
+                    i += 1;
+                    value = self.args[i]
+                    args.update({key: value})
+                    break
+
                 key, value = self.args[i].split('=')
             except ValueError:
                 print("Wrong command format")
