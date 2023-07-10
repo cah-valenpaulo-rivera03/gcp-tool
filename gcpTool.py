@@ -51,12 +51,12 @@ class GCPTool:
     def attach_disk(self, disk, is_boot=False):
         if is_boot:
             command = "gcloud compute instances attach-disk --project %s "\
-                      "--zone %s %s --disk=%s --boot" % (
-                          self.project, self.zone, self.server_name, disk)
+                      "--zone %s %s --disk=%s --boot --device-name=%s" % (
+                          self.project, self.zone, self.server_name, disk, disk)
         else:
             command = "gcloud compute instances attach-disk --project %s "\
-                      "--zone %s %s --disk=%s" % (
-                          self.project, self.zone, self.server_name, disk)
+                      "--zone %s %s --disk=%s --device-name=%s" % (
+                          self.project, self.zone, self.server_name, disk, disk)
 
         print('attaching %s to %s...' % (disk, self.server_name))
         os.system(command)
