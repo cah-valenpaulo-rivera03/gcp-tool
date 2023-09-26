@@ -66,7 +66,7 @@ class GCPTool:
         print('getting list of disks...')
         get_disk_cmd = 'gcloud compute disks list --filter="users:%s" '\
             '--format=json --project %s' % (self.server_name, self.project)
-        disks = subprocess.getoutput(get_disk_cmd) 
+        disks = subprocess.getoutput(get_disk_cmd)
         disks = json.loads(disks)
 
         print('Choose disk to restore:') 
