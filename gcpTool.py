@@ -61,7 +61,8 @@ class GCPTool:
         print('attaching %s to %s...' % (disk, self.server_name))
         os.system(command)
 
-    def restore_disk(self, date, time):
+    def restore_disk(self, date, time, is_boot):
+        # Get disks
         print('getting list of disks...')
         get_disk_cmd = 'gcloud compute disks list --filter="users:%s" '\
             '--format=json --project %s' % (self.server_name, self.project)
@@ -95,11 +96,20 @@ class GCPTool:
         disk_labels = disk["labels"] if "labels" in disk else None
         disk_policies = disk["resourcePolicies"]
 
+        # describe old disk
+        command = "gcloud compute disks describe %s --project %s --zone %s --format=json" % (disk_name, self.project, self.zone)
+        os.system(command)
+
         # snapshot filter
-        time_utc = int(time) + 4
-        datetime = date + str(time_utc)
+        if time:
+            time_utc = int(time) + 4
+            datetime = date + str(time_utc)
+        else:
+            datetime = date
+            
         filter = "sourceDisk:" + disk_name + " AND name ~ " + datetime
 
+        # Get Snapshot
         print('getting disk snapshot...')
         get_snapshot_cmd = 'gcloud compute snapshots list --project=%s '\
             '--filter="%s" --format="json"' % (self.project, filter)
@@ -114,28 +124,49 @@ class GCPTool:
             print("No snapshot found")
             sys.exit()
 
-        print(snapshot)
         data = snapshot[0]
         snapshot_name = data["name"]
         snapshot_random_key = data["name"].split("-")[-1]
-        
+
+        # Detach old disk
+        print('Detaching %s disk...' % disk_name)
+        self.detach_disk(disk_name)
+
+        # Delete old disk
+        print('Deleting %s disk...' % disk_name)
+        command = "gcloud compute disks delete %s --project %s --zone %s" % (disk_name, self.project, self.zone)
+        os.system(command)
+
         print('creating disk via "%s" snapshot...' % snapshot_name)
         
-        new_disk_name = "%s-%s" % (disk_name, snapshot_random_key)
-
+        # Create new disk from snapshot
+        
+        # Format Disk Labels
         if disk_labels:
+            gcp_label_list_format = ""
+            disk_labels_len = len(disk_labels)
+            ctr = 1
+            for key, value in disk_labels.items():
+                if ctr == disk_labels_len:
+                    gcp_label_format = "%s=%s" % (key, value)
+                else:
+                    gcp_label_format = "%s=%s," % (key, value)
+
+                gcp_label_list_format += gcp_label_format
+                ctr += 1
+                
             create_disk_cmd = "gcloud compute disks create %s " \
                 "--project %s --zone %s " \
                 "--size=%s " \
                 "--source-snapshot=%s " \
                 "--type=%s " \
-                "--labels=%s" % (new_disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type, disk_labels)
+                "--labels=%s" % (disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type, gcp_label_list_format)
         else:
             create_disk_cmd = "gcloud compute disks create %s " \
                 "--project %s --zone %s " \
                 "--size=%s " \
                 "--source-snapshot=%s " \
-                "--type=%s " % (new_disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type)
+                "--type=%s " % (disk_name, self.project, self.zone, disk_size, snapshot_name, disk_type)
 
         os.system(create_disk_cmd)
 
@@ -143,15 +174,21 @@ class GCPTool:
             policy = policy_link.split('/')[-1]
             add_policy_cmd = "gcloud compute disks add-resource-policies %s " \
                 "--project %s --zone %s " \
-                "--resource-policies=%s " % (new_disk_name, self.project, self.zone, policy)
+                "--resource-policies=%s " % (disk_name, self.project, self.zone, policy)
             os.system(add_policy_cmd)
             
-        print("disk %s has been created." % new_disk_name)
+        print("Disk %s has been created." % disk_name)
 
-        # self.detach_disk(disk_name)
-
-        # self.attach_disk(new_disk_name, is_boot=True)
-
+        # Attach new disk
+        print("Attaching %s disk..." % disk_name)
+        if is_boot:
+            self.attach_disk(disk_name, is_boot=True)
+        else:
+            self.attach_disk(disk_name, is_boot=False)
+        
+        # describe new disk
+        command = "gcloud compute disks describe %s --project %s --zone %s --format=json" % (disk_name, self.project, self.zone)
+        os.system(command)
         
     def detach_disk(self, disk):
         # get server disk details
@@ -314,7 +351,6 @@ class CommandLineTool:
         # filter
         required = [
             ['--date', '-D'],
-            ['--time', '-T']
         ]
         args = self.get_args()
         self.check_required_parameter(required, args)
@@ -323,7 +359,11 @@ class CommandLineTool:
         server = self.get_server()
         project = args['--project'] if '--project' in args.keys() else args['-p'] if '-p' in args.keys() else None
         date = args['--date'] if '--date' in args.keys() else args['-D']
-        time = args['--time'] if '--time' in args.keys() else args['-T']
+        is_boot = True if '--boot' in args.keys() else False
+        try:
+            time = args['--time'] if '--time' in args.keys() else args['-T']
+        except KeyError:
+            time = None
 
         project, zone, server = self.get_server_details(server, project)
         
@@ -335,7 +375,7 @@ class CommandLineTool:
         self.yes_no_validation(val)
 
         gcp_tool = GCPTool(server, project, zone)
-        gcp_tool.restore_disk(date, time)
+        gcp_tool.restore_disk(date, time, is_boot)
 
     def detach_disk(self):
         # filter
