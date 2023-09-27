@@ -103,7 +103,8 @@ class GCPTool:
         # snapshot filter
         if time:
             time_utc = int(time) + 4
-            datetime = date + str(time_utc)
+            time_utc = "{:02d}".format(time_utc)
+            datetime = date + time_utc
         else:
             datetime = date
             
